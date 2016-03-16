@@ -297,4 +297,251 @@ public class Capture extends CordovaPlugin {
                 this.cordova.getThreadPool().execute(captureAudio);
             } else if (requestCode == CAPTURE_IMAGE) {
                 // For some reason if I try to do:
-    
+                // Uri data = intent.getData();
+                // It crashes in the emulator and on my phone with a null pointer exception
+                // To work around it I had to grab the code from CameraLauncher.java
+
+                final Capture that = this;
+                Runnable captureImage = new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            // TODO Auto-generated method stub
+                            // Create entry in media store for image
+                            // (Don't use insertImage() because it uses default compression setting of 50 - no way to change it)
+                            ContentValues values = new ContentValues();
+                            values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, IMAGE_JPEG);
+                            Uri uri = null;
+                            try {
+                                uri = that.cordova.getActivity().getContentResolver().insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                            } catch (UnsupportedOperationException e) {
+                                LOG.d(LOG_TAG, "Can't write to external media storage.");
+                                try {
+                                    uri = that.cordova.getActivity().getContentResolver().insert(android.provider.MediaStore.Images.Media.INTERNAL_CONTENT_URI, values);
+                                } catch (UnsupportedOperationException ex) {
+                                    LOG.d(LOG_TAG, "Can't write to internal media storage.");
+                                    that.fail(createErrorObject(CAPTURE_INTERNAL_ERR, "Error capturing image - no media storage found."));
+                                    return;
+                                }
+                            }
+                            FileInputStream fis = new FileInputStream(getTempDirectoryPath() + "/Capture.jpg");
+                            OutputStream os = that.cordova.getActivity().getContentResolver().openOutputStream(uri);
+                            byte[] buffer = new byte[4096];
+                            int len;
+                            while ((len = fis.read(buffer)) != -1) {
+                                os.write(buffer, 0, len);
+                            }
+                            os.flush();
+                            os.close();
+                            fis.close();
+
+                            // Add image to results
+                            results.put(createMediaFile(uri));
+
+                            checkForDuplicateImage();
+
+                            if (results.length() >= limit) {
+                                // Send Uri back to JavaScript for viewing image
+                                that.callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, results));
+                            } else {
+                                // still need to capture more images
+                                captureImage();
+                            }
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                            that.fail(createErrorObject(CAPTURE_INTERNAL_ERR, "Error capturing image."));
+                        }
+                    }
+                };
+                this.cordova.getThreadPool().execute(captureImage);
+            } else if (requestCode == CAPTURE_VIDEO) {
+
+                final Capture that = this;
+                Runnable captureVideo = new Runnable() {
+
+                    @Override
+                    public void run() {
+
+                        Uri data = null;
+
+                        if (intent != null){
+                            // Get the uri of the video clip
+                            data = intent.getData();
+                        }
+
+                        if( data == null){
+                           File movie = new File(getTempDirectoryPath(), "Capture.avi");
+                           data = Uri.fromFile(movie);
+                        }
+
+                        // create a file object from the uri
+                        if(data == null)
+                        {
+                            that.fail(createErrorObject(CAPTURE_NO_MEDIA_FILES, "Error: data is null"));
+                        }
+                        else
+                        {
+                            results.put(createMediaFile(data));
+
+                            if (results.length() >= limit) {
+                                // Send Uri back to JavaScript for viewing video
+                                that.callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, results));
+                            } else {
+                                // still need to capture more video clips
+                                captureVideo(duration, quality);
+                            }
+                        }
+                    }
+                };
+                this.cordova.getThreadPool().execute(captureVideo);
+            }
+        }
+        // If canceled
+        else if (resultCode == Activity.RESULT_CANCELED) {
+            // If we have partial results send them back to the user
+            if (results.length() > 0) {
+                this.callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, results));
+            }
+            // user canceled the action
+            else {
+                this.fail(createErrorObject(CAPTURE_NO_MEDIA_FILES, "Canceled."));
+            }
+        }
+        // If something else
+        else {
+            // If we have partial results send them back to the user
+            if (results.length() > 0) {
+                this.callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, results));
+            }
+            // something bad happened
+            else {
+                this.fail(createErrorObject(CAPTURE_NO_MEDIA_FILES, "Did not complete!"));
+            }
+        }
+    }
+
+    /**
+     * Creates a JSONObject that represents a File from the Uri
+     *
+     * @param data the Uri of the audio/image/video
+     * @return a JSONObject that represents a File
+     * @throws IOException
+     */
+    private JSONObject createMediaFile(Uri data) {
+        File fp = webView.getResourceApi().mapUriToFile(data);
+        JSONObject obj = new JSONObject();
+
+        Class webViewClass = webView.getClass();
+        PluginManager pm = null;
+        try {
+            Method gpm = webViewClass.getMethod("getPluginManager");
+            pm = (PluginManager) gpm.invoke(webView);
+        } catch (NoSuchMethodException e) {
+        } catch (IllegalAccessException e) {
+        } catch (InvocationTargetException e) {
+        }
+        if (pm == null) {
+            try {
+                Field pmf = webViewClass.getField("pluginManager");
+                pm = (PluginManager)pmf.get(webView);
+            } catch (NoSuchFieldException e) {
+            } catch (IllegalAccessException e) {
+            }
+        }
+        FileUtils filePlugin = (FileUtils) pm.getPlugin("File");
+        LocalFilesystemURL url = filePlugin.filesystemURLforLocalPath(fp.getAbsolutePath());
+
+        try {
+            // File properties
+            obj.put("name", fp.getName());
+            obj.put("fullPath", fp.toURI().toString());
+            if (url != null) {
+                obj.put("localURL", url.toString());
+            }
+            // Because of an issue with MimeTypeMap.getMimeTypeFromExtension() all .3gpp files
+            // are reported as video/3gpp. I'm doing this hacky check of the URI to see if it
+            // is stored in the audio or video content store.
+            if (fp.getAbsoluteFile().toString().endsWith(".3gp") || fp.getAbsoluteFile().toString().endsWith(".3gpp")) {
+                if (data.toString().contains("/audio/")) {
+                    obj.put("type", AUDIO_3GPP);
+                } else {
+                    obj.put("type", VIDEO_3GPP);
+                }
+            } else {
+                obj.put("type", FileHelper.getMimeType(Uri.fromFile(fp), cordova));
+            }
+
+            obj.put("lastModifiedDate", fp.lastModified());
+            obj.put("size", fp.length());
+        } catch (JSONException e) {
+            // this will never happen
+            e.printStackTrace();
+        }
+        return obj;
+    }
+
+    private JSONObject createErrorObject(int code, String message) {
+        JSONObject obj = new JSONObject();
+        try {
+            obj.put("code", code);
+            obj.put("message", message);
+        } catch (JSONException e) {
+            // This will never happen
+        }
+        return obj;
+    }
+
+    /**
+     * Send error message to JavaScript.
+     *
+     * @param err
+     */
+    public void fail(JSONObject err) {
+        this.callbackContext.error(err);
+    }
+
+
+    /**
+     * Creates a cursor that can be used to determine how many images we have.
+     *
+     * @return a cursor
+     */
+    private Cursor queryImgDB(Uri contentStore) {
+        return this.cordova.getActivity().getContentResolver().query(
+            contentStore,
+            new String[] { MediaStore.Images.Media._ID },
+            null,
+            null,
+            null);
+    }
+
+    /**
+     * Used to find out if we are in a situation where the Camera Intent adds to images
+     * to the content store.
+     */
+    private void checkForDuplicateImage() {
+        Uri contentStore = whichContentStore();
+        Cursor cursor = queryImgDB(contentStore);
+        int currentNumOfImages = cursor.getCount();
+
+        // delete the duplicate file if the difference is 2
+        if ((currentNumOfImages - numPics) == 2) {
+            cursor.moveToLast();
+            int id = Integer.valueOf(cursor.getString(cursor.getColumnIndex(MediaStore.Images.Media._ID))) - 1;
+            Uri uri = Uri.parse(contentStore + "/" + id);
+            this.cordova.getActivity().getContentResolver().delete(uri, null, null);
+        }
+    }
+
+    /**
+     * Determine if we are storing the images in internal or external storage
+     * @return Uri
+     */
+    private Uri whichContentStore() {
+        if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
+            return android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        } else {
+            return android.provider.MediaStore.Images.Media.INTERNAL_CONTENT_URI;
+        }
+    }
+}

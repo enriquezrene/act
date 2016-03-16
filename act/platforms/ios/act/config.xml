@@ -58,4 +58,7 @@
     <preference name="DisallowOverscroll" value="true" />
     <preference name="android-minSdkVersion" value="16" />
     <preference name="BackupWebStorage" value="none" />
+    <feature name="Media">
+        <param name="ios-package" value="CDVSound" />
+    </feature>
 </widget>

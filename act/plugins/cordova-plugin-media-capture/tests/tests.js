@@ -237,27 +237,4 @@ exports.defineManualTests = function (contentEl, createActionButton) {
         'img: <img width="100" id="camera_image">' +
         'video: <div id="video_container"></div>' +
         '</div><div id="audio"></div>' +
-        'Expected result: Audio recorder will come up. Press record button to record for 10 seconds. Press Done. Status box will update with audio file and automatically play recording.' +
-        '<p/> <div id="image"></div>' +
-        'Expected result: Status box will update with image just taken.' +
-        '<p/> <div id="video"></div>' +
-        'Expected result: Record 10 second video. Status box will update with video file that you can play.' +
-        '<p/> <div id="video_and_resolve"></div>' +
-        'Expected result: Record 5 second video. Status box will show that URL was resolved and video will get added at the bottom of the status box for playback.';
-
-    createActionButton('Capture 10 sec of audio and play', function () {
-        getAudio();
-    }, 'audio');
-
-    createActionButton('Capture 1 image', function () {
-        getImage();
-    }, 'image');
-
-    createActionButton('Capture 10 sec of video', function () {
-        getVideo();
-    }, 'video');
-
-    createActionButton('Capture 5 sec of video and resolve', function () {
-        resolveVideo();
-    }, 'video_and_resolve');
-};
+        'Expected result: Audio recorder will come up. Press record button to record for 10 seconds. Press Done. Status box will update with
